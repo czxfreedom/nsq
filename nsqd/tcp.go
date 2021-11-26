@@ -25,7 +25,7 @@ type tcpServer struct {
 
 func (p *tcpServer) Handle(conn net.Conn) {
 	p.nsqd.logf(LOG_INFO, "TCP: new client(%s)", conn.RemoteAddr())
-
+	//接受客户端发送过来的初始化自身的协议
 	// The client should initialize itself by sending a 4 byte sequence indicating
 	// the version of the protocol that it intends to communicate, this will allow us
 	// to gracefully upgrade the protocol away from text/line oriented to whatever...
@@ -46,13 +46,14 @@ func (p *tcpServer) Handle(conn net.Conn) {
 	case "  V2":
 		prot = &protocolV2{nsqd: p.nsqd}
 	default:
+		//协议出错,关闭链接并返回
 		protocol.SendFramedResponse(conn, frameTypeError, []byte("E_BAD_PROTOCOL"))
 		conn.Close()
 		p.nsqd.logf(LOG_ERROR, "client(%s) bad protocol magic '%s'",
 			conn.RemoteAddr(), protocolMagic)
 		return
 	}
-
+	//组装客户端链接,并存入链接map中
 	client := prot.NewClient(conn)
 	p.conns.Store(conn.RemoteAddr(), client)
 

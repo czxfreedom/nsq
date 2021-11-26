@@ -20,9 +20,9 @@ import (
 const maxTimeout = time.Hour
 
 const (
-	frameTypeResponse int32 = 0
-	frameTypeError    int32 = 1
-	frameTypeMessage  int32 = 2
+	frameTypeResponse int32 = 0 //响应
+	frameTypeError    int32 = 1 //错误
+	frameTypeMessage  int32 = 2 //消息
 )
 
 var separatorBytes = []byte(" ")
@@ -50,11 +50,17 @@ func (p *protocolV2) IOLoop(c protocol.Client) error {
 	// goroutine local state derived from client attributes
 	// and avoid a potential race with IDENTIFY (where a client
 	// could have changed or disabled said attributes)
+	//// 按顺序同步messagePump的启动
+	//// 保证有机会初始化
+	//// 来自客户端属性的 goroutine 本地状态
+	//// 并避免与 IDENTIFY 的潜在竞争（其中客户端
+	//// 可以更改或禁用所述属性）
 	messagePumpStartedChan := make(chan bool)
 	go p.messagePump(client, messagePumpStartedChan)
 	<-messagePumpStartedChan
 
 	for {
+		//设置读超时时间
 		if client.HeartbeatInterval > 0 {
 			client.SetReadDeadline(time.Now().Add(client.HeartbeatInterval * 2))
 		} else {
@@ -176,27 +182,27 @@ func (p *protocolV2) Exec(client *clientV2, params [][]byte) ([]byte, error) {
 		return nil, err
 	}
 	switch {
-	case bytes.Equal(params[0], []byte("FIN")):
+	case bytes.Equal(params[0], []byte("FIN")): //消费完成
 		return p.FIN(client, params)
-	case bytes.Equal(params[0], []byte("RDY")):
+	case bytes.Equal(params[0], []byte("RDY")): //指定可同时处理的消息数量
 		return p.RDY(client, params)
-	case bytes.Equal(params[0], []byte("REQ")):
+	case bytes.Equal(params[0], []byte("REQ")): //消息重新加入队列
 		return p.REQ(client, params)
-	case bytes.Equal(params[0], []byte("PUB")):
+	case bytes.Equal(params[0], []byte("PUB")): //发布单条消息
 		return p.PUB(client, params)
-	case bytes.Equal(params[0], []byte("MPUB")):
+	case bytes.Equal(params[0], []byte("MPUB")): //发布多条消息
 		return p.MPUB(client, params)
-	case bytes.Equal(params[0], []byte("DPUB")):
+	case bytes.Equal(params[0], []byte("DPUB")): //发布单条延迟消息
 		return p.DPUB(client, params)
-	case bytes.Equal(params[0], []byte("NOP")):
+	case bytes.Equal(params[0], []byte("NOP")): //不做任何处理
 		return p.NOP(client, params)
-	case bytes.Equal(params[0], []byte("TOUCH")):
+	case bytes.Equal(params[0], []byte("TOUCH")): //重新设置消息处理超时时间
 		return p.TOUCH(client, params)
-	case bytes.Equal(params[0], []byte("SUB")):
+	case bytes.Equal(params[0], []byte("SUB")): //订阅，订阅后才能消费消息
 		return p.SUB(client, params)
-	case bytes.Equal(params[0], []byte("CLS")):
+	case bytes.Equal(params[0], []byte("CLS")): //关闭停止消费
 		return p.CLS(client, params)
-	case bytes.Equal(params[0], []byte("AUTH")):
+	case bytes.Equal(params[0], []byte("AUTH")): //授权
 		return p.AUTH(client, params)
 	}
 	return nil, protocol.NewFatalClientErr(nil, "E_INVALID", fmt.Sprintf("invalid command %s", params[0]))
@@ -210,6 +216,9 @@ func (p *protocolV2) messagePump(client *clientV2, startedChan chan bool) {
 	// NOTE: `flusherChan` is used to bound message latency for
 	// the pathological case of a channel on a low volume topic
 	// with >1 clients having >1 RDY counts
+	// 注意：`flusherChan` 用于绑定消息延迟
+	// 一个频道在一个低音量话题上的病态案例
+	// >1 个客户端具有 >1 个 RDY 计数
 	var flusherChan <-chan time.Time
 	var sampleRate int32
 
@@ -226,10 +235,18 @@ func (p *protocolV2) messagePump(client *clientV2, startedChan chan bool) {
 	//    2. we're buffered and the channel has nothing left to send us
 	//       (ie. we would block in this loop anyway)
 	//
+	// v2 opportunistically buffers data to clients to reduce write system calls
+	// we force flush in two cases:
+	//    1. when the client is not ready to receive messages
+	//    2. we're buffered and the channel has nothing left to send us
+	//       (ie. we would block in this loop anyway)
+	//
 	flushed := true
 
 	// signal to the goroutine that started the messagePump
 	// that we've started up
+	// 向启动 messagePump 的 goroutine 发出信号
+	// 我们已经启动
 	close(startedChan)
 
 	for {
@@ -770,13 +787,13 @@ func (p *protocolV2) PUB(client *clientV2, params [][]byte) ([]byte, error) {
 	if len(params) < 2 {
 		return nil, protocol.NewFatalClientErr(nil, "E_INVALID", "PUB insufficient number of parameters")
 	}
-
+	//解析topic名称
 	topicName := string(params[1])
 	if !protocol.IsValidTopicName(topicName) {
 		return nil, protocol.NewFatalClientErr(nil, "E_BAD_TOPIC",
 			fmt.Sprintf("PUB topic name %q is not valid", topicName))
 	}
-
+	//解析body 长度
 	bodyLen, err := readLen(client.Reader, client.lenSlice)
 	if err != nil {
 		return nil, protocol.NewFatalClientErr(err, "E_BAD_MESSAGE", "PUB failed to read message body size")
@@ -791,13 +808,13 @@ func (p *protocolV2) PUB(client *clientV2, params [][]byte) ([]byte, error) {
 		return nil, protocol.NewFatalClientErr(nil, "E_BAD_MESSAGE",
 			fmt.Sprintf("PUB message too big %d > %d", bodyLen, p.nsqd.getOpts().MaxMsgSize))
 	}
-
+	//读取消息体
 	messageBody := make([]byte, bodyLen)
 	_, err = io.ReadFull(client.Reader, messageBody)
 	if err != nil {
 		return nil, protocol.NewFatalClientErr(err, "E_BAD_MESSAGE", "PUB failed to read message body")
 	}
-
+	//校验是否需要验证
 	if err := p.CheckAuth(client, "PUB", topicName, ""); err != nil {
 		return nil, err
 	}
@@ -808,7 +825,7 @@ func (p *protocolV2) PUB(client *clientV2, params [][]byte) ([]byte, error) {
 	if err != nil {
 		return nil, protocol.NewFatalClientErr(err, "E_PUB_FAILED", "PUB failed "+err.Error())
 	}
-
+	//topic数量加1
 	client.PublishedMessage(topicName, 1)
 
 	return okBytes, nil

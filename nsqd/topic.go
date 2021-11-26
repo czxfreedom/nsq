@@ -15,20 +15,20 @@ import (
 
 type Topic struct {
 	// 64bit atomic vars need to be first for proper alignment on 32bit platforms
-	messageCount uint64
-	messageBytes uint64
+	messageCount uint64 //消息数量
+	messageBytes uint64 //消息字节数
 
-	sync.RWMutex
+	sync.RWMutex //读写锁
 
-	name              string
-	channelMap        map[string]*Channel
-	backend           BackendQueue
-	memoryMsgChan     chan *Message
-	startChan         chan int
-	exitChan          chan int
+	name              string              //topic 名称
+	channelMap        map[string]*Channel //channelMap
+	backend           BackendQueue        //磁盘消息队列
+	memoryMsgChan     chan *Message       //内存消息队列
+	startChan         chan int            //开始启动的通道
+	exitChan          chan int            //退出通知的通道
 	channelUpdateChan chan int
-	waitGroup         util.WaitGroupWrapper
-	exitFlag          int32
+	waitGroup         util.WaitGroupWrapper //waitGroup的封装
+	exitFlag          int32                 //退出的标志
 	idFactory         *guidFactory
 
 	ephemeral      bool
@@ -223,6 +223,7 @@ func (t *Topic) PutMessages(msgs []*Message) error {
 
 func (t *Topic) put(m *Message) error {
 	select {
+	//先往内存通道发布,当内存队列满的时候就将消息写入到磁盘里面
 	case t.memoryMsgChan <- m:
 	default:
 		err := writeMessageToBackend(m, t.backend)

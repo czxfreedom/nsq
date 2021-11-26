@@ -203,6 +203,8 @@ func newClientV2(id int64, conn net.Conn, nsqd *NSQD) *clientV2 {
 
 		// ReadyStateChan has a buffer of 1 to guarantee that in the event
 		// there is a race the state update is not lost
+		// ReadyStateChan 有一个缓冲区为 1 以保证在事件
+		// 有数据竞争的状态下更新不会丢失
 		ReadyStateChan: make(chan int, 1),
 		ExitChan:       make(chan int),
 		ConnectTime:    time.Now(),

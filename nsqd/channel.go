@@ -36,38 +36,38 @@ type Consumer interface {
 // messages, timeouts, requeuing, etc.
 type Channel struct {
 	// 64bit atomic vars need to be first for proper alignment on 32bit platforms
-	requeueCount uint64
-	messageCount uint64
-	timeoutCount uint64
+	requeueCount uint64 //重新入队数量
+	messageCount uint64 //消息数量
+	timeoutCount uint64 //超时数量，已经消费，但没有反馈结果，会重新加入队列，messageCount不会自增
 
 	sync.RWMutex
 
-	topicName string
-	name      string
+	topicName string //topic name
+	name      string //通道 name
 	nsqd      *NSQD
 
-	backend BackendQueue
+	backend BackendQueue //将消息写入磁盘的队列，维护磁盘消息的读写
 
-	memoryMsgChan chan *Message
-	exitFlag      int32
+	memoryMsgChan chan *Message //内存消息队列，通道buffer默认10000
+	exitFlag      int32         //退出标记，1表示退出，0没有退出
 	exitMutex     sync.RWMutex
 
 	// state tracking
-	clients        map[int64]Consumer
-	paused         int32
-	ephemeral      bool
-	deleteCallback func(*Channel)
+	clients        map[int64]Consumer //连接到这个topic-channel的所有client
+	paused         int32              //暂停标记，0不暂停，1暂停，暂停就不会往这个channel中copy消息
+	ephemeral      bool               //临时channel标记，临时channel不会存到文件中
+	deleteCallback func(*Channel)     //用于从topic中删除channel
 	deleter        sync.Once
 
 	// Stats tracking
 	e2eProcessingLatencyStream *quantile.Quantile
 
 	// TODO: these can be DRYd up
-	deferredMessages map[MessageID]*pqueue.Item
-	deferredPQ       pqueue.PriorityQueue
+	deferredMessages map[MessageID]*pqueue.Item //延迟消息map，方便查找
+	deferredPQ       pqueue.PriorityQueue       //延迟消息队列
 	deferredMutex    sync.Mutex
-	inFlightMessages map[MessageID]*Message
-	inFlightPQ       inFlightPqueue
+	inFlightMessages map[MessageID]*Message //消费中的消息map，方便查找
+	inFlightPQ       inFlightPqueue         //消费中的消息队列
 	inFlightMutex    sync.Mutex
 }
 

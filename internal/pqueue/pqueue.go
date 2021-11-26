@@ -5,9 +5,9 @@ import (
 )
 
 type Item struct {
-	Value    interface{}
-	Priority int64
-	Index    int
+	Value    interface{} //*Message
+	Priority int64       //执行的时间戳，单位毫秒
+	Index    int         //队列索引
 }
 
 // this is a priority queue as implemented by a min heap

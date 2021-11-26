@@ -31,8 +31,9 @@ func main() {
 }
 
 func (p *program) Init(env svc.Environment) error {
+	//获取配置
 	opts := nsqd.NewOptions()
-
+	//解析配置
 	flagSet := nsqdFlagSet(opts)
 	flagSet.Parse(os.Args[1:])
 

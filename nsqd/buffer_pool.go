@@ -5,6 +5,7 @@ import (
 	"sync"
 )
 
+//池化操作
 var bp sync.Pool
 
 func init() {

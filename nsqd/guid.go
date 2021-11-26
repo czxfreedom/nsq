@@ -9,6 +9,13 @@ package nsqd
 // of workerID + datacenterId into a single identifier, and modify the
 // behavior when sequences rollover for our specific implementation needs
 
+//这里的核心算法借鉴自：
+//布莱克·米泽兰尼的《诺艾克》https://github.com/bmizerany/noeqd
+//间接地：
+//推特上的“雪花”https://github.com/twitter/snowflake
+//只需进行小的清理和更改，以引入一个类型，并结合该概念
+//将workerID+datacenterId的
+//针对特定实现需要进行序列滚动时的行为
 import (
 	"encoding/hex"
 	"errors"

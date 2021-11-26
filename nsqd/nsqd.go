@@ -48,9 +48,9 @@ type NSQD struct {
 
 	opts atomic.Value
 
-	dl        *dirlock.DirLock
-	isLoading int32
-	isExiting int32
+	dl        *dirlock.DirLock //目录锁
+	isLoading int32            //是否加载
+	isExiting int32            //是否退出
 	errValue  atomic.Value
 	startTime time.Time
 
@@ -58,18 +58,18 @@ type NSQD struct {
 
 	lookupPeers atomic.Value
 
-	tcpServer     *tcpServer
-	tcpListener   net.Listener
-	httpListener  net.Listener
-	httpsListener net.Listener
-	tlsConfig     *tls.Config
+	tcpServer     *tcpServer   //tcp
+	tcpListener   net.Listener //tcp监听
+	httpListener  net.Listener //http监听
+	httpsListener net.Listener //https监听
+	tlsConfig     *tls.Config  //tls 配置
 
-	poolSize int
+	poolSize int //池大小
 
-	notifyChan           chan interface{}
-	optsNotificationChan chan struct{}
-	exitChan             chan int
-	waitGroup            util.WaitGroupWrapper
+	notifyChan           chan interface{}      //通知通道
+	optsNotificationChan chan struct{}         //选项通知通道
+	exitChan             chan int              //退出通道
+	waitGroup            util.WaitGroupWrapper //waitGroup封装
 
 	ci *clusterinfo.ClusterInfo
 }
@@ -249,7 +249,7 @@ func (n *NSQD) Main() error {
 			exitCh <- err
 		})
 	}
-
+	//开启tcp监听服务
 	n.waitGroup.Wrap(func() {
 		exitFunc(protocol.TCPServer(n.tcpListener, n.tcpServer, n.logf))
 	})
@@ -466,12 +466,13 @@ func (n *NSQD) GetTopic(topicName string) *Topic {
 	}
 
 	n.Lock()
-
+	//topic不存在就新建一个topic
 	t, ok = n.topicMap[topicName]
 	if ok {
 		n.Unlock()
 		return t
 	}
+	//删除topic的回调函数
 	deleteCallback := func(t *Topic) {
 		n.DeleteExistingTopic(t.name)
 	}
@@ -485,12 +486,16 @@ func (n *NSQD) GetTopic(topicName string) *Topic {
 
 	// if this topic was created while loading metadata at startup don't do any further initialization
 	// (topic will be "started" after loading completes)
+	//如果此主题是在启动时加载元数据时创建的，请不要执行任何进一步的初始化
+	//（加载完成后主题将“启动”）
 	if atomic.LoadInt32(&n.isLoading) == 1 {
 		return t
 	}
 
 	// if using lookupd, make a blocking call to get channels and immediately create them
 	// to ensure that all channels receive published messages
+	//如果使用lookupd，则进行阻塞调用以获取通道并立即创建它们
+	//确保所有频道都接收已发布的消息
 	lookupdHTTPAddrs := n.lookupdHTTPAddrs()
 	if len(lookupdHTTPAddrs) > 0 {
 		channelNames, err := n.ci.GetLookupdTopicChannels(t.name, lookupdHTTPAddrs)
