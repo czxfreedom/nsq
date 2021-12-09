@@ -66,16 +66,19 @@ func (p *program) Init(env svc.Environment) error {
 }
 
 func (p *program) Start() error {
+	//加载topic,channel等数据
 	err := p.nsqd.LoadMetadata()
 	if err != nil {
 		logFatal("failed to load metadata - %s", err)
 	}
+	//持久化topic,channel数据
 	err = p.nsqd.PersistMetadata()
 	if err != nil {
 		logFatal("failed to persist metadata - %s", err)
 	}
 
 	go func() {
+		//main入口
 		err := p.nsqd.Main()
 		if err != nil {
 			p.Stop()

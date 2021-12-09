@@ -2,6 +2,7 @@ package nsqd
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -23,7 +24,7 @@ type Topic struct {
 	name              string              //topic 名称
 	channelMap        map[string]*Channel //channelMap
 	backend           BackendQueue        //磁盘消息队列
-	memoryMsgChan     chan *Message       //内存消息队列
+	memoryMsgChan     chan *Message       //内存消息队列  消息优先写内存队列
 	startChan         chan int            //开始启动的通道
 	exitChan          chan int            //退出通知的通道
 	channelUpdateChan chan int
@@ -90,6 +91,7 @@ func NewTopic(topicName string, nsqd *NSQD, deleteCallback func(*Topic)) *Topic 
 func (t *Topic) Start() {
 	select {
 	case t.startChan <- 1:
+		fmt.Println("t.startChan")
 	default:
 	}
 }
@@ -261,6 +263,8 @@ func (t *Topic) messagePump() {
 			continue
 		case <-t.exitChan:
 			goto exit
+			//topic.Start()函数会往startChan写入值1
+			//t.startChan有值的时候 表示topic启动成功 退出for循环
 		case <-t.startChan:
 		}
 		break
@@ -285,6 +289,7 @@ func (t *Topic) messagePump() {
 				t.nsqd.logf(LOG_ERROR, "failed to decode message - %s", err)
 				continue
 			}
+			//channel数量发送变化
 		case <-t.channelUpdateChan:
 			chans = chans[:0]
 			t.RLock()
@@ -292,6 +297,7 @@ func (t *Topic) messagePump() {
 				chans = append(chans, c)
 			}
 			t.RUnlock()
+			//没有channel 通道置为阻塞
 			if len(chans) == 0 || t.IsPaused() {
 				memoryMsgChan = nil
 				backendChan = nil
@@ -324,6 +330,8 @@ func (t *Topic) messagePump() {
 				chanMsg.Timestamp = msg.Timestamp
 				chanMsg.deferred = msg.deferred
 			}
+			//表示延时消息，此时不是直接调用putMessage()方法写入channel，而是调用channel.PutMessageDeferred
+			//消息被写入了延时队列Channel.deferredMessages和Channel.deferredPQ
 			if chanMsg.deferred != 0 {
 				channel.PutMessageDeferred(chanMsg, chanMsg.deferred)
 				continue

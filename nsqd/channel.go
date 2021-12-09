@@ -63,15 +63,15 @@ type Channel struct {
 	e2eProcessingLatencyStream *quantile.Quantile
 
 	// TODO: these can be DRYd up
-	deferredMessages map[MessageID]*pqueue.Item //延迟消息map，方便查找
-	deferredPQ       pqueue.PriorityQueue       //延迟消息队列
+	deferredMessages map[MessageID]*pqueue.Item // 保存尚未到时间的延迟消费消息
+	deferredPQ       pqueue.PriorityQueue       // 保存尚未到时间的延迟消费消息，最小堆
 	deferredMutex    sync.Mutex
-	inFlightMessages map[MessageID]*Message //消费中的消息map，方便查找
-	inFlightPQ       inFlightPqueue         //消费中的消息队列
+	inFlightMessages map[MessageID]*Message // 保存已推送尚未收到FIN的消息
+	inFlightPQ       inFlightPqueue         //// 保存已推送尚未收到FIN的消息，最小堆
 	inFlightMutex    sync.Mutex
 }
 
-// NewChannel creates a new instance of the Channel type and returns a pointer
+// NewChannel creates a new instance of the Channel type and returns (t *Topic) put(m *Message)a pointer
 func NewChannel(topicName string, channelName string, nsqd *NSQD,
 	deleteCallback func(*Channel)) *Channel {
 
@@ -346,6 +346,10 @@ func (c *Channel) TouchMessage(clientID int64, id MessageID, clientMsgTimeout ti
 	return nil
 }
 
+//FinishMessage()方法把上面写入超时缓存的msg给删除掉
+//FIN从inFlightMessages中删除消息比较容易，这是个map，key是msg.id。
+//客户端发送FIN消息时附带了msg.id。但如何从最小堆inFlightPQ中删除对应的msg呢？
+//前面提到在入堆时的一个细节，即保存了msg的偏移量，此时正好用上。通过msg.index直接定位到msg的位置并调整堆即可。
 // FinishMessage successfully discards an in-flight message
 func (c *Channel) FinishMessage(clientID int64, id MessageID) error {
 	msg, err := c.popInFlightMessage(clientID, id)
@@ -443,6 +447,8 @@ func (c *Channel) RemoveClient(clientID int64) {
 	}
 }
 
+//channel.StartInFlightTimeout()将消息保存到channel的inFlightMessages和inFlightPQ队列中，这两个缓存是用来处理消费超时的。
+//值得注意的一个小细节是c.addToInFlightPQ(msg)将msg压入最小堆时，将msg在数组的偏移量保存到了msg.index成员中（最小堆底层是数组实现）
 func (c *Channel) StartInFlightTimeout(msg *Message, clientID int64, timeout time.Duration) error {
 	now := time.Now()
 	msg.clientID = clientID

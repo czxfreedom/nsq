@@ -23,6 +23,8 @@ type tcpServer struct {
 	conns sync.Map
 }
 
+//本方法首先对新连接读取4字节校验版本，新连接必须首先发送4字节"  V2"。
+//	然后阻塞调用nsqd.protocolV2.IOLoop()处理客户端接下来的请求。
 func (p *tcpServer) Handle(conn net.Conn) {
 	p.nsqd.logf(LOG_INFO, "TCP: new client(%s)", conn.RemoteAddr())
 	//接受客户端发送过来的初始化自身的协议

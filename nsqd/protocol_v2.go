@@ -208,6 +208,14 @@ func (p *protocolV2) Exec(client *clientV2, params [][]byte) ([]byte, error) {
 	return nil, protocol.NewFatalClientErr(nil, "E_INVALID", fmt.Sprintf("invalid command %s", params[0]))
 }
 
+//这行创建了一个独立线程，调用的protocolV2.messagePump()负责向消费者推送消息。
+//有个小细节是无论是生产者还是消费者，都会创建这个协程，protocolV2.messagePump()创建后并不会立即推送消息，
+//而是需要调用SUB指令，以protocolV2.SUB()方法为例，方法末尾有这么一行：
+//	client.SubEventChan <- channel
+//客户端建立连接初始，subChannel为空，循环一直走第1个if语句。直到客户端调用SUB指令，select语句执行"case subChannel = <-subEventChan:"，
+//此时subChannel非空，接下来backendMsgChan和memoryMsgChan被赋值，此后开始推送消息：
+//消息会随机从内存和磁盘队列取，因为如果内存和磁盘都有数据，select是随机的
+//消息通过protocolV2.SendMessage()推送给消费者
 func (p *protocolV2) messagePump(client *clientV2, startedChan chan bool) {
 	var err error
 	var memoryMsgChan chan *Message

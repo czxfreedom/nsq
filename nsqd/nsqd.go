@@ -39,14 +39,14 @@ type errStore struct {
 
 type NSQD struct {
 	// 64bit atomic vars need to be first for proper alignment on 32bit platforms
-	clientIDSequence int64
+	clientIDSequence int64 // 递增的客户端ID，每个客户端连接均从这里取一个递增后的ID作为唯一标识
 
 	sync.RWMutex
 	ctx context.Context
 	// ctxCancel cancels a context that main() is waiting on
 	ctxCancel context.CancelFunc
 
-	opts atomic.Value
+	opts atomic.Value // 参数选项，真实类型是apps/nsqd/option.go:Options结构体
 
 	dl        *dirlock.DirLock //目录锁
 	isLoading int32            //是否加载
@@ -54,7 +54,7 @@ type NSQD struct {
 	errValue  atomic.Value
 	startTime time.Time
 
-	topicMap map[string]*Topic
+	topicMap map[string]*Topic //保存所有的topic
 
 	lookupPeers atomic.Value
 
@@ -64,7 +64,7 @@ type NSQD struct {
 	httpsListener net.Listener //https监听
 	tlsConfig     *tls.Config  //tls 配置
 
-	poolSize int //池大小
+	poolSize int //// 当前工作协程组的协程数量
 
 	notifyChan           chan interface{}      //通知通道
 	optsNotificationChan chan struct{}         //选项通知通道
@@ -253,6 +253,7 @@ func (n *NSQD) Main() error {
 	n.waitGroup.Wrap(func() {
 		exitFunc(protocol.TCPServer(n.tcpListener, n.tcpServer, n.logf))
 	})
+	//开启http服务
 	if n.httpListener != nil {
 		httpServer := newHTTPServer(n, false, n.getOpts().TLSRequired == TLSRequired)
 		n.waitGroup.Wrap(func() {
@@ -595,7 +596,7 @@ func (n *NSQD) channels() []*Channel {
 // resizePool adjusts the size of the pool of queueScanWorker goroutines
 //
 // 	1 <= pool <= min(num * 0.25, QueueScanWorkerPoolMax)
-//
+// 由queueScanLoop()调用，负责启动工作协程组并动态调整协程数量。工作协程的数量为当前的channel数 * 0.25
 func (n *NSQD) resizePool(num int, workCh chan *Channel, responseCh chan bool, closeCh chan int) {
 	idealPoolSize := int(float64(num) * 0.25)
 	if idealPoolSize < 1 {
@@ -622,6 +623,8 @@ func (n *NSQD) resizePool(num int, workCh chan *Channel, responseCh chan bool, c
 
 // queueScanWorker receives work (in the form of a channel) from queueScanLoop
 // and processes the deferred and in-flight queues
+// 这是具体的工作协程，监听workCh，对收到的待处理Channel做两个动作，一是将超时的消息重新入队；二是将到时间的延时消息入队
+
 func (n *NSQD) queueScanWorker(workCh chan *Channel, responseCh chan bool, closeCh chan int) {
 	for {
 		select {
@@ -654,6 +657,16 @@ func (n *NSQD) queueScanWorker(workCh chan *Channel, responseCh chan bool, close
 //
 // If QueueScanDirtyPercent (default: 25%) of the selected channels were dirty,
 // the loop continues without sleep.
+//queueScanLoop在单个goroutine中运行，以处理正在运行和延迟的数据
+//优先级队列。它管理一个queueScanWorker池（可配置最大
+//同时处理通道的QueueScanWorkerPoolMax（默认值：4））。
+//它复制了Redis的概率过期算法：它每天都会被唤醒
+//QueueScanInterval（默认值：100ms）以选择随机QueueScanSelectionCount
+//（默认值：20）本地缓存列表中的通道（每小时刷新一次）
+//QueueScanRefreshInterval（默认值：5s））。
+//超时逻辑由程序启动时开启的工作线程组来处理
+
+//// 负责管理工作协程组的数量，每调用一次NSQD.queueScanWorker()方法启动一个工作协程
 func (n *NSQD) queueScanLoop() {
 	workCh := make(chan *Channel, n.getOpts().QueueScanSelectionCount)
 	responseCh := make(chan bool, n.getOpts().QueueScanSelectionCount)
