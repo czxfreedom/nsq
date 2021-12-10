@@ -55,10 +55,15 @@ func (p *protocolV2) IOLoop(c protocol.Client) error {
 	//// 来自客户端属性的 goroutine 本地状态
 	//// 并避免与 IDENTIFY 的潜在竞争（其中客户端
 	//// 可以更改或禁用所述属性）
+
+	// 如果client是生产者，那么会在下面的for循环中不断向 memoryMsgChan 或者 backendMsgChan 写入message。
+	// 如果Client是消费者，那么会在messagePump中不断的从memoryMsgChan 或者 backendMsgChan 中读取message。
 	messagePumpStartedChan := make(chan bool)
 	go p.messagePump(client, messagePumpStartedChan)
+	// 阻塞在这里，直到messagePump这个方法里面的准备工作都已经做好。
 	<-messagePumpStartedChan
 
+	// 循环接收客户端发送过来的请求
 	for {
 		//设置读超时时间
 		if client.HeartbeatInterval > 0 {
@@ -66,6 +71,7 @@ func (p *protocolV2) IOLoop(c protocol.Client) error {
 		} else {
 			client.SetReadDeadline(zeroTime)
 		}
+		// 读取客户端发送的请求
 
 		// ReadSlice does not allocate new space for the data each request
 		// ie. the returned slice is only valid until the next call to it
@@ -76,20 +82,24 @@ func (p *protocolV2) IOLoop(c protocol.Client) error {
 			} else {
 				err = fmt.Errorf("failed to read command - %s", err)
 			}
+			// 如果读到EOF，说明客户端已经关闭，则退出循环
 			break
 		}
-
+		// 忽略末尾的\n trim the '\n'
+		// 忽略末尾的\r 如果存在的话 optionally trim the '\r'
 		// trim the '\n'
 		line = line[:len(line)-1]
 		// optionally trim the '\r'
 		if len(line) > 0 && line[len(line)-1] == '\r' {
 			line = line[:len(line)-1]
 		}
+		// 对参数进行解析
 		params := bytes.Split(line, separatorBytes)
 
 		p.nsqd.logf(LOG_DEBUG, "PROTOCOL(V2): [%s] %s", client, params)
 
 		var response []byte
+		// 执行客户端发送过来的命令
 		response, err = p.Exec(client, params)
 		if err != nil {
 			ctx := ""
@@ -97,7 +107,7 @@ func (p *protocolV2) IOLoop(c protocol.Client) error {
 				ctx = " - " + parentErr.Error()
 			}
 			p.nsqd.logf(LOG_ERROR, "[%s] - %s%s", client, err, ctx)
-
+			// 若执行的过程中报错，向客户端返回错误
 			sendErr := p.Send(client, frameTypeError, []byte(err.Error()))
 			if sendErr != nil {
 				p.nsqd.logf(LOG_ERROR, "[%s] - %s%s", client, sendErr, ctx)
@@ -110,6 +120,7 @@ func (p *protocolV2) IOLoop(c protocol.Client) error {
 			}
 			continue
 		}
+		// 如果命令执行正常，则进行回复。
 
 		if response != nil {
 			err = p.Send(client, frameTypeResponse, response)
@@ -119,10 +130,12 @@ func (p *protocolV2) IOLoop(c protocol.Client) error {
 			}
 		}
 	}
+	// 读到EOF或者出现错误则退出
 
 	p.nsqd.logf(LOG_INFO, "PROTOCOL(V2): [%s] exiting ioloop", client)
 	close(client.ExitChan)
 	if client.Channel != nil {
+		// 客户端断开后，将client 从 channel中移除
 		client.Channel.RemoveClient(client.ID)
 	}
 
@@ -218,8 +231,8 @@ func (p *protocolV2) Exec(client *clientV2, params [][]byte) ([]byte, error) {
 //消息通过protocolV2.SendMessage()推送给消费者
 func (p *protocolV2) messagePump(client *clientV2, startedChan chan bool) {
 	var err error
-	var memoryMsgChan chan *Message
-	var backendMsgChan <-chan []byte
+	var memoryMsgChan chan *Message  //为内存缓冲区，Topic和Channel内存缓冲区的大小可以通过同一变量mem-queue-size来进行配置。
+	var backendMsgChan <-chan []byte //为磁盘优先级队列。通过diskqueue来实现。发送到backendMsgChan中的消息会通过diskqueue写入到磁盘中。
 	var subChannel *Channel
 	// NOTE: `flusherChan` is used to bound message latency for
 	// the pathological case of a channel on a low volume topic
@@ -258,6 +271,7 @@ func (p *protocolV2) messagePump(client *clientV2, startedChan chan bool) {
 	close(startedChan)
 
 	for {
+		// 最初的时候subChannel == nil，在这里将所有变量都进行重置
 		if subChannel == nil || !client.IsReadyForMessages() {
 			// the client is not ready to receive messages...
 			memoryMsgChan = nil
@@ -272,6 +286,8 @@ func (p *protocolV2) messagePump(client *clientV2, startedChan chan bool) {
 			}
 			flushed = true
 		} else if flushed {
+			// 如果subChannel不为空，并且已经flushed过了，利用channel对memoryMsgChan和backendMsgChan
+			// 进行初始化，这时客户端就可以从memoryMsgChan和backendMsgChan中消费消息了。
 			// last iteration we flushed...
 			// do not select on the flusher ticker channel
 			memoryMsgChan = subChannel.memoryMsgChan
@@ -298,8 +314,10 @@ func (p *protocolV2) messagePump(client *clientV2, startedChan chan bool) {
 			}
 			flushed = true
 		case <-client.ReadyStateChan:
+			// 在NSQD接收到来自客户端的SUB命令时，会将客户端订阅的channel写入client.subChannel
 		case subChannel = <-subEventChan:
 			// you can't SUB anymore
+			// 在这里对subChannel赋值，每个Client只能订阅一个Topic，所以这里subEventChan会被置为nil
 			subEventChan = nil
 		case identifyData := <-identifyEventChan:
 			// you can't IDENTIFY anymore
@@ -331,7 +349,7 @@ func (p *protocolV2) messagePump(client *clientV2, startedChan chan bool) {
 			if sampleRate > 0 && rand.Int31n(100) > sampleRate {
 				continue
 			}
-
+			// backendMsgChan 收到消息，然后发送给Client
 			msg, err := decodeMessage(b)
 			if err != nil {
 				p.nsqd.logf(LOG_ERROR, "failed to decode message - %s", err)
@@ -347,12 +365,14 @@ func (p *protocolV2) messagePump(client *clientV2, startedChan chan bool) {
 			}
 			flushed = false
 		case msg := <-memoryMsgChan:
+			// memeoryMsgChan 收到消息，然后发送给Client
 			if sampleRate > 0 && rand.Int31n(100) > sampleRate {
 				continue
 			}
 			msg.Attempts++
 
 			subChannel.StartInFlightTimeout(msg, client.ID, msgTimeout)
+			//做了个实验,发现对同一个channel有多个消费者的话每个消费者会轮流得到消息,按理应该是随机的,这边没找到原因
 			client.SendingMessage()
 			err = p.SendMessage(client, msg)
 			if err != nil {

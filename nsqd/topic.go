@@ -282,6 +282,7 @@ func (t *Topic) messagePump() {
 	// main message loop
 	for {
 		select {
+		// 这里会从memoryMsgChan和backendMsgChan中随机来获取消息，所以NSQD是不保证消息有序的。
 		case msg = <-memoryMsgChan:
 		case buf = <-backendChan:
 			msg, err = decodeMessage(buf)
@@ -320,6 +321,7 @@ func (t *Topic) messagePump() {
 		}
 
 		for i, channel := range chans {
+			fmt.Println(channel.name)
 			chanMsg := msg
 			// copy the message because each channel
 			// needs a unique instance but...
@@ -336,6 +338,7 @@ func (t *Topic) messagePump() {
 				channel.PutMessageDeferred(chanMsg, chanMsg.deferred)
 				continue
 			}
+			// 将消息发送给Topic，和Topic接收消息相似，channel把消息写入其中的memoryMsgChan或者backendMsgChan
 			err := channel.PutMessage(chanMsg)
 			if err != nil {
 				t.nsqd.logf(LOG_ERROR,
